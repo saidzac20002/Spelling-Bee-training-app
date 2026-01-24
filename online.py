@@ -1,33 +1,44 @@
 import random
+import sys
 import tkinter as tk
 from tkinter import messagebox
-import pyttsx3
 from gtts import gTTS
 from playsound3 import playsound
+import tempfile
 import unicodedata
 import os
 
 
 # ===================== CONFIGURACIÓN =====================
 WORD_FILE = "isw.txt"             # Tu archivo con una palabra por línea
-BLANK_PROBABILITY = 0.65        # 0.4 = fácil   |   0.8 = difícil
 
 
 # ===================== TTS (pronunciación) =====================
-engine = pyttsx3.init('sapi5')
-engine.setProperty('rate', 140)
+# pyttsx3 for "correcto" / "la palabra era"; gTTS for Pronunciar. sapi5 = Windows only.
+engine = None
+try:
+    import pyttsx3
+    if sys.platform == "win32":
+        engine = pyttsx3.init("sapi5")
+    else:
+        engine = pyttsx3.init()
+except Exception:
+    pass
 
-voices = engine.getProperty('voices')
-spanish_voice_set = False
-for voice in voices:
-    if "spanish" in voice.name.lower() or "es-" in voice.id.lower() or "helena" in voice.name.lower():
-        engine.setProperty('voice', voice.id)
-        spanish_voice_set = True
-        print(f"Voz seleccionada: {voice.name}")
-        break
-
-if not spanish_voice_set:
-    print("No se encontró voz en español → usando voz por defecto")
+if engine:
+    engine.setProperty("rate", 140)
+    voices = engine.getProperty("voices")
+    spanish_voice_set = False
+    for voice in voices:
+        if "spanish" in voice.name.lower() or "es-" in voice.id.lower() or "helena" in voice.name.lower():
+            engine.setProperty("voice", voice.id)
+            spanish_voice_set = True
+            print(f"Voz seleccionada: {voice.name}")
+            break
+    if not spanish_voice_set:
+        print("No se encontró voz en español → usando voz por defecto")
+else:
+    print("pyttsx3 no disponible → solo gTTS (Pronunciar) para audio")
 
 
 # ===================== CARGAR PALABRAS =====================
@@ -53,38 +64,26 @@ if not palabras:
     exit()
 
 
-# ===================== CREAR BLANKS =====================
-def crear_blanks(palabra):
-    if len(palabra) <= 3:
-        return " ".join(["_" if i > 0 else c for i, c in enumerate(palabra)])
-
-    chars = list(palabra)
-    for i in range(1, len(chars)):
-        if random.random() < BLANK_PROBABILITY:
-            chars[i] = "_"
-    return " ".join(chars)
-
-
 # ===================== INTERFAZ GRÁFICA =====================
 root = tk.Tk()
-root.title("Spanish Word Completion Game - ISW")
-root.geometry("760x540")
+root.title("Spanish Spelling Bee - ISW")
+root.geometry("760x520")
 root.configure(bg="#f0f8ff")
 root.resizable(False, False)
 
 
 # Título
-titulo = tk.Label(root, text="¡Completa la palabra!", font=("Helvetica", 28, "bold"),
+titulo = tk.Label(root, text="¡Escucha y escribe la palabra!", font=("Helvetica", 26, "bold"),
                   bg="#f0f8ff", fg="#2c3e50")
-titulo.pack(pady=(30, 10))
+titulo.pack(pady=(28, 10))
 
 
-# Área de la palabra con blanks
-palabra_var = tk.StringVar(value="Presiona 'Nueva palabra' para comenzar")
-palabra_label = tk.Label(root, textvariable=palabra_var, font=("Consolas", 40, "bold"),
-                         bg="#ffffff", fg="#34495e", width=22, height=2,
-                         relief="ridge", borderwidth=4, padx=10, pady=10)
-palabra_label.pack(pady=20)
+# Área de indicación (sin mostrar la palabra)
+hint_var = tk.StringVar(value="Presiona 'Nueva palabra' para comenzar")
+hint_label = tk.Label(root, textvariable=hint_var, font=("Helvetica", 18),
+                      bg="#e8f4f8", fg="#2c3e50", width=36, height=2,
+                      relief="ridge", borderwidth=2, padx=10, pady=10)
+hint_label.pack(pady=20)
 
 
 # ─── Entrada + botón ñ ───────────────────────────────────────
@@ -116,8 +115,7 @@ palabra_actual = ""
 def nueva_palabra():
     global palabra_actual
     palabra_actual = random.choice(palabras)
-    blanks = crear_blanks(palabra_actual)
-    palabra_var.set(blanks)
+    hint_var.set("??? — Escucha con 🔊 Pronunciar y escribe la palabra")
     entry.delete(0, tk.END)
     entry.focus()
     status_var.set(f"Palabra de {len(palabra_actual)} letras")
@@ -128,11 +126,14 @@ def pronunciar():
     if not palabra_actual:
         return
     try:
-        tts = gTTS(text=palabra_actual, lang='es', slow=False)
-        filename = "temp_word.mp3"
-        tts.save(filename)
-        playsound(filename)
-        os.remove(filename)
+        tts = gTTS(text=palabra_actual, lang="es", slow=False)
+        fd, path = tempfile.mkstemp(suffix=".mp3")
+        os.close(fd)
+        tts.save(path)
+        try:
+            playsound(path)
+        finally:
+            os.remove(path)
     except Exception as e:
         print("Audio error:", e)
         messagebox.showwarning("Problema de audio", "No se pudo reproducir.\nRevisa conexión a internet.")
@@ -164,22 +165,30 @@ def comprobar():
     palabra_norm   = normalize_no_accents(palabra_actual)
 
     if respuesta_norm == palabra_norm:
-        messagebox.showinfo("¡Correcto!", f"¡Muy bien!\n\n{palabra_actual.upper()}")
-        engine.say("correcto")
-        engine.runAndWait()
+        messagebox.showinfo("¡Correcto!", "¡Muy bien!")
+        if engine:
+            engine.say("correcto")
+            engine.runAndWait()
         nueva_palabra()
     else:
         messagebox.showwarning("Incorrecto", f"La palabra era:\n\n{palabra_actual.upper()}")
-        engine.say(f"la palabra era {palabra_actual}")
-        engine.runAndWait()
+        if engine:
+            engine.say(f"la palabra era {palabra_actual}")
+            engine.runAndWait()
 
 
-# Atajos de teclado (solo Enter para comprobar)
+# Atajos de teclado
 def on_enter(event=None):
     comprobar()
 
 
+def on_ctrl_n(event=None):
+    nueva_palabra()
+
+
 entry.bind("<Return>", on_enter)
+root.bind("<Control-n>", on_ctrl_n)
+root.bind("<Control-N>", on_ctrl_n)
 
 
 # ===================== BOTONES =====================
@@ -203,7 +212,7 @@ btn_comprobar.pack(pady=10)
 
 
 # Estado
-status_var = tk.StringVar(value="Listo – presiona Nueva palabra para empezar")
+status_var = tk.StringVar(value="Listo – Nueva palabra (Ctrl+N) para empezar")
 status_label = tk.Label(root, textvariable=status_var,
                         font=("Arial", 13), bg="#f0f8ff", fg="#7f8c8d")
 status_label.pack(pady=10)
